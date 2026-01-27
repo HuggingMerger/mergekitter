@@ -9,22 +9,35 @@ from mergekit.merge_methods.generalized_task_arithmetic import (
     ConsensusMethod,
     GeneralizedTaskArithmeticMerge,
 )
+
 from mergekit.merge_methods.karcher import KarcherMerge
 from mergekit.merge_methods.linear import LinearMerge
 from mergekit.merge_methods.model_stock import ModelStockMerge
+from mergekit.merge_methods.v_stock import VStockMerge
 from mergekit.merge_methods.nuslerp import NuSlerpMerge
-from mergekit.merge_methods.passthrough import PassthroughMerge
 from mergekit.merge_methods.slerp import SlerpMerge
+from mergekit.merge_methods.passthrough import PassthroughMerge
+from mergekit.merge_methods.cabs import CABSMerge
+from mergekit.merge_methods.wave import WAVEMerge
+from mergekit.merge_methods.swcm import SWCMMerge
+from mergekit.merge_methods.core_space import CoreSpaceMerge
+from mergekit.merge_methods.magic import MagicMerge
 from mergekit.sparsify import SparsificationMethod
 
 STATIC_MERGE_METHODS: List[MergeMethod] = [
     LinearMerge(),
     SlerpMerge(),
     NuSlerpMerge(),
-    PassthroughMerge(),
     ModelStockMerge(),
     ArceeFusionMerge(),
     KarcherMerge(),
+    CABSMerge(),
+    VStockMerge(),
+    PassthroughMerge(),
+    CoreSpaceMerge(),
+    MagicMerge(),
+    WAVEMerge(),
+    SWCMMerge(),    
     # generalized task arithmetic methods
     GeneralizedTaskArithmeticMerge(
         consensus_method=None,
@@ -98,7 +111,44 @@ STATIC_MERGE_METHODS: List[MergeMethod] = [
         method_pretty_name="Linear DELLA",
         method_reference_url="https://arxiv.org/abs/2406.11617",
     ),
+    GeneralizedTaskArithmeticMerge(
+        consensus_method=None,
+        sparsification_method=None,
+        default_normalize=False,
+        default_rescale=False,
+        method_name="tsvm",
+        method_pretty_name="TSV-M",
+        method_reference_url="https://arxiv.org/abs/2412.00081",
+    ),
+    GeneralizedTaskArithmeticMerge(
+        consensus_method=None,
+        sparsification_method=None,
+        default_normalize=False,
+        default_rescale=False,
+        method_name="iso_c",
+        method_pretty_name="ISO-C",
+        method_reference_url="https://www.arxiv.org/pdf/2502.04959",
+    ),
+    GeneralizedTaskArithmeticMerge(
+        consensus_method=None,
+        sparsification_method=None,
+        default_normalize=False,
+        default_rescale=False,
+        method_name="task_arithmetic_sb",
+        method_pretty_name="Task Arithmetic with Subspace Boosting",
+        method_reference_url="https://arxiv.org/abs/2212.04089",
+    ),
+    GeneralizedTaskArithmeticMerge(
+        consensus_method=ConsensusMethod.sum,
+        sparsification_method=SparsificationMethod.magnitude,
+        default_normalize=True,
+        default_rescale=False,
+        method_name="ties_sb",
+        method_pretty_name="TIES with Subspace Boosting",
+        method_reference_url="https://arxiv.org/abs/2306.01708",
+    ),
 ]
+
 
 REGISTERED_MERGE_METHODS: Dict[str, MergeMethod] = {
     method.name(): method for method in STATIC_MERGE_METHODS
