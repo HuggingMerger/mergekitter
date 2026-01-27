@@ -1,0 +1,19 @@
+merge_method: iso_c
+
+base_model: ./Lambent_Mira-v1.19.3c-27B-dpo
+
+models:
+  - model: ./Lambent_Mira-v1.19.3c-27B-dpo
+    parameters:
+      weight: 0.2
+  - model: ./Lambent_Mira-v1.23-27B-rlvr
+    parameters:
+      weight: 0.8
+      
+parameters:
+  use_magic: true
+  magic_scaling_factor: 1.0
+  cumsum: true
+  
+tokenizer:
+  source: "union"  # Combine vocabularies from both models
