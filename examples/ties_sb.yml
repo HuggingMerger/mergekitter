@@ -1,0 +1,29 @@
+merge_method: ties_sb
+
+base_model: ./Lambent_Mira-v1.19.3c-27B-dpo
+
+models:
+  - model: ./Lambent_Mira-v1.19.3c-27B-dpo # Base doesn't need params.
+  - model: ./Lambent_Mira-v1.22.2-27B
+    parameters:
+      weight: 1.0
+      density: 1.0
+  - model: ./Lambent_Mira-v1.23-27B-rlvr
+    parameters:
+      weight: 1.0
+      density: 1.0
+  - model: ./Lambent_Mira-v1.8.1a-27B
+    parameters:
+      weight: 1.0
+      density: 1.0
+
+parameters:
+  normalize: true
+  int8_mask: false
+  svd_thresh: 0.82 # % of energy.
+  cumsum: true # The "smart" thresholding
+
+dtype: bfloat16
+
+tokenizer:
+  source: union
