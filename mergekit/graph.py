@@ -10,6 +10,7 @@ Classes:
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Union
+import logging
 
 import networkx
 import torch
@@ -18,6 +19,8 @@ from pydantic import BaseModel
 from typing_extensions import Generic, TypeVar
 
 ValueT = TypeVar("ValueT")
+
+LOG = logging.getLogger(__name__)
 
 
 class Task(ABC, BaseModel, Generic[ValueT], frozen=True):
@@ -470,18 +473,43 @@ class Executor:
             task = task_handle.task()
             use_math_device = task.uses_accelerator()
 
-            arguments = {}
-            for name, dep_handle in task_handle.arguments().items():
-                value = values[dep_handle]
+            try:
+                arguments = {}
+                for name, dep_handle in task_handle.arguments().items():
+                    value = values[dep_handle]
 
-                # ensure any input tensors are on math device if task asks for it
-                if use_math_device:
-                    value = self._move_tensors(value, self.math_device)
+                    # ensure any input tensors are on math device if task asks for it
+                    if use_math_device:
+                        value = self._move_tensors(value, self.math_device)
 
-                arguments[name] = value
-                del value
+                    arguments[name] = value
+                    del value
 
-            res = task.execute(**arguments)
+                res = task.execute(**arguments)
+            except RuntimeError as e:
+                # Handle OOM by falling back to CPU
+                if use_math_device and "out of memory" in str(e).lower():
+                    LOG.warning(
+                        f"OOM detected for task {task}. Falling back to CPU execution."
+                    )
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    elif hasattr(torch, "xpu") and torch.xpu.is_available():
+                        torch.xpu.empty_cache()
+
+                    # Re-gather arguments on CPU
+                    arguments = {}
+                    cpu_device = torch.device("cpu")
+                    for name, dep_handle in task_handle.arguments().items():
+                        value = values[dep_handle]
+                        # Move to CPU explicitly (in case storage was GPU)
+                        value = self._move_tensors(value, cpu_device)
+                        arguments[name] = value
+
+                    res = task.execute(**arguments)
+                else:
+                    raise
+
             del arguments
             res = self._move_tensors(res, self.storage_device)
 
