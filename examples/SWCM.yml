@@ -1,0 +1,18 @@
+merge_method: SWCM
+
+base_model: ./Lambent_Mira-v1.22.2-27B
+
+models:
+  - model: ./Lambent_Mira-v1.22.2-27B
+  - model: ./Lambent_Mira-v1.23-27B-rlvr
+  - model: ./Lambent_Mira-v1.14-27B
+      
+parameters:
+  density_strength: 1.5
+  regularization: 0.0
+  max_iter: 3
+  
+tokenizer:
+  source: union
+  
+dtype: bfloat16  
