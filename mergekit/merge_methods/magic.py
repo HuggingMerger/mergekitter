@@ -56,7 +56,7 @@ class MagicTask(Task[torch.Tensor]):
 
     def execute(self, tensors: Dict[ModelReference, torch.Tensor]) -> torch.Tensor:
         if self.base_model not in tensors:
-            raise RuntimeError("Base model tensor not found for MAGIC merge")
+            raise RuntimeError("MAGIC merge requires a 'base_model'.")
 
         base_tensor = tensors[self.base_model]
         base_device = base_tensor.device
