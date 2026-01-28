@@ -2,10 +2,10 @@ name: anything
 
 merge_method: magic
 
-base_model: ./Lambent_Mira-v1.22.2-27B
+base_model: ./Lambent_Mira-v1.22.2-27B # Base model is required for MAGIC
 
 models:
-  - model: ./Lambent_Mira-v1.22.2-27B # Base model is required for MAGIC
+  - model: ./Lambent_Mira-v1.22.2-27B # Base model doesn't need params.
   - model: ./Lambent_Mira-v1.23-27B-rlvr
     parameters:
       weight: 1.0
