@@ -19,36 +19,19 @@ from mergekit.merge_methods.rectify_embed import rectify_embed_sizes
 
 def magic_magnitude_calibration(
     merged_tv: torch.Tensor,
-    original_tvs_or_norms: List[torch.Tensor] | torch.Tensor,
+    input_norms: torch.Tensor,
     scaling_factor: float = 1.0,
 ) -> torch.Tensor:
     """
     Implements Weight Space Calibration (WSC) from MAGIC (arXiv:2512.19320).
     Rescales the merged task vector to match the average magnitude of original task vectors.
-
-    Args:
-        merged_tv: The (merged) task vector to calibrate.
-        original_tvs_or_norms: Either a list of original task vectors (deltas) OR
-                               a precomputed tensor of their norms.
-        scaling_factor: Multiplier for the target magnitude (rho in the paper).
     """
-    if isinstance(original_tvs_or_norms, list):
-        if not original_tvs_or_norms:
-            return merged_tv
-        # Compute norms of original vectors
-        # Use float32 for stability
-        orig_norms = torch.stack(
-            [tv.to(torch.float32).norm() for tv in original_tvs_or_norms]
-        )
-    elif isinstance(original_tvs_or_norms, torch.Tensor):
-        orig_norms = original_tvs_or_norms.to(torch.float32)
-    else:
-        raise ValueError("Invalid input for original_tvs_or_norms")
-
-    target_norm = orig_norms.mean() * scaling_factor
+    # calc target norm rho * (1/N * sum(||tau_i||))
+    target_norm = input_norms.mean() * scaling_factor
+    
+    # calc current norm of the merged vector
     current_norm = merged_tv.to(torch.float32).norm()
 
-    # Avoid division by zero
     if current_norm < 1e-6:
         return merged_tv
 
@@ -79,34 +62,57 @@ class MagicTask(Task[torch.Tensor]):
         base_device = base_tensor.device
         base_dtype = base_tensor.dtype
 
-        # 1. Compute Task Vectors
-        task_vectors = []
+        # grab other models
         model_keys = [k for k in tensors.keys() if k != self.base_model]
-        
-        # Prepare list for rectify to ensure sizes match
-        all_tensors_for_rectify = [base_tensor] + [tensors[k] for k in model_keys]
-        rectify_embed_sizes(self.weight_info, all_tensors_for_rectify)
-        
-        # Re-fetch potentially resized base
-        base_tensor = all_tensors_for_rectify[0]
-
-        for i, key in enumerate(model_keys):
-            model_tensor = all_tensors_for_rectify[i+1].to(base_dtype).to(base_device)
-            weight = self.tensor_parameters[key].get("weight", 1.0)
-            
-            delta = (model_tensor - base_tensor) * weight
-            task_vectors.append(delta)
-
-        if not task_vectors:
+        if not model_keys:
             return base_tensor
 
-        # 2. Basic Merge (Sum/Task Arithmetic)
-        # MAGIC paper primarily applies it to the sum of task vectors
-        merged_delta = torch.sum(torch.stack(task_vectors), dim=0)
+        if self.weight_info.is_embed:
+            # prep list
+            all_tensors_ordered = [base_tensor] + [tensors[k] for k in model_keys]
+            rectify_embed_sizes(self.weight_info, all_tensors_ordered)
+            
+            # refetch resized base
+            base_tensor = all_tensors_ordered[0]
+            for i, k in enumerate(model_keys):
+                tensors[k] = all_tensors_ordered[i+1]
+        
+        # gather summed tv
+        merged_delta = torch.zeros_like(base_tensor, dtype=base_dtype, device=base_device)
+        
+        # store norms of individual tvs for magic calc
+        norms_list = []
 
-        # 3. MAGIC Calibration
+        for key in model_keys:
+            # dtype
+            model_tensor = tensors[key].to(base_dtype).to(base_device)
+            
+            params = self.tensor_parameters[key]
+            weight = params["weight"] if "weight" in params else 1.0
+            
+            # calc tv (tau_i)
+            # delta = (fine_tuned - base) * weight
+            delta = model_tensor.sub_(base_tensor).mul_(weight)
+
+            # capture norm
+            norms_list.append(delta.to(torch.float32).norm())
+
+            # add to merged delta sum
+            merged_delta.add_(delta)
+
+            # cleanup
+            del delta
+            del model_tensor
+            del tensors[key]
+
+        if not norms_list:
+            return base_tensor
+
+        # Stack norms 
+        input_norms = torch.stack(norms_list)
+
         calibrated_delta = magic_magnitude_calibration(
-            merged_delta, task_vectors, self.scaling_factor
+            merged_delta, input_norms, self.scaling_factor
         )
 
         return base_tensor + calibrated_delta
