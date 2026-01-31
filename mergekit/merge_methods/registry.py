@@ -5,39 +5,26 @@ from typing import Dict, List
 
 from mergekit.merge_methods.arcee_fusion import ArceeFusionMerge
 from mergekit.merge_methods.base import MergeMethod
+from mergekit.merge_methods.cabs import CABSMerge
 from mergekit.merge_methods.generalized_task_arithmetic import (
     ConsensusMethod,
     GeneralizedTaskArithmeticMerge,
 )
-
 from mergekit.merge_methods.karcher import KarcherMerge
 from mergekit.merge_methods.linear import LinearMerge
-from mergekit.merge_methods.model_stock import ModelStockMerge
-from mergekit.merge_methods.v_stock import VStockMerge
-from mergekit.merge_methods.nuslerp import NuSlerpMerge
-from mergekit.merge_methods.slerp import SlerpMerge
-from mergekit.merge_methods.passthrough import PassthroughMerge
-from mergekit.merge_methods.cabs import CABSMerge
-from mergekit.merge_methods.wave import WAVEMerge
-from mergekit.merge_methods.swcm import SWCMMerge
-from mergekit.merge_methods.core_space import CoreSpaceMerge
 from mergekit.merge_methods.magic import MagicMerge
+from mergekit.merge_methods.model_stock import ModelStockMerge
+from mergekit.merge_methods.slerp import SlerpMerge
 from mergekit.sparsify import SparsificationMethod
 
 STATIC_MERGE_METHODS: List[MergeMethod] = [
     LinearMerge(),
     SlerpMerge(),
-    NuSlerpMerge(),
     ModelStockMerge(),
     ArceeFusionMerge(),
     KarcherMerge(),
     CABSMerge(),
-    VStockMerge(),
-    PassthroughMerge(),
-    CoreSpaceMerge(),
     MagicMerge(),
-    WAVEMerge(),
-    SWCMMerge(),    
     # generalized task arithmetic methods
     GeneralizedTaskArithmeticMerge(
         consensus_method=None,
