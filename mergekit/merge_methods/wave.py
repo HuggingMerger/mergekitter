@@ -11,7 +11,7 @@ from mergekit.merge_methods.easy_define import merge_method
 from mergekit.merge_methods.rectify_embed import rectify_embed_sizes
 
 
-@merge_method(name="wave", pretty_name="WAVE (Ultra-Low Memory)")
+@merge_method(name="wave", pretty_name="WAVE")
 def wave_merge(
     tensors: List[torch.Tensor],
     base_tensor: torch.Tensor,
