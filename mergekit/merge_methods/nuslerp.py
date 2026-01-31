@@ -1,255 +1,71 @@
 # Copyright (C) 2025 Arcee AI
 # SPDX-License-Identifier: BUSL-1.1
 
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 import torch
-from torch._tensor import Tensor
-from typing_extensions import override
 
 from mergekit.architecture import WeightInfo
-from mergekit.common import ImmutableMap, ModelReference
-from mergekit.graph import Task
-from mergekit.merge_methods.base import (
-    ConfigParameterDef,
-    MergeMethod,
-    MergeTensorInput,
-)
+from mergekit.merge_methods.easy_define import merge_method
 from mergekit.merge_methods.rectify_embed import rectify_embed_sizes
 
 
-class NuSlerpTask(Task[torch.Tensor]):
-    """Task for performing NuSLERP or ChipAlign merges between two model tensors."""
-    gather_tensors: MergeTensorInput
-    tensor_parameters: ImmutableMap[ModelReference, ImmutableMap[str, Any]]
-    weight_info: WeightInfo
-    row_wise: bool
-    flatten: bool
-    base_model: Optional[ModelReference]
-    geodesic: bool  # Whether to use ChipAlign-style geodesic interpolation
-    lambda_val: Optional[float]  # Interpolation factor for geodesic mode
+@merge_method(
+    name="nuslerp",
+    pretty_name="NuSLERP",
+    reference_url="https://arxiv.org/abs/2412.19819",
+)
+def nuslerp_merge(
+    tensors: List[torch.Tensor],
+    output_weight: WeightInfo,
+    base_tensor: Optional[torch.Tensor] = None,
+    weight: List[float] = 0.5,
+    nuslerp_row_wise: bool = False,
+    nuslerp_flatten: bool = True,
+    geodesic: bool = False,
+    lambda_: Optional[float] = None,
+) -> torch.Tensor:
 
-    def uses_accelerator(self) -> bool:
-        return True
+    all_inputs = [base_tensor] + tensors if base_tensor is not None else tensors
+    rectify_embed_sizes(output_weight, all_inputs)
 
-    def arguments(self) -> Dict[str, Task]:
-        return {"tensors": self.gather_tensors}
+    if base_tensor is not None:
+        base_tensor = all_inputs[0]
+        v0, v1 = all_inputs[1] - base_tensor, all_inputs[2] - base_tensor
+    else:
+        v0, v1 = all_inputs[0], all_inputs[1]
 
-    def execute(self, tensors: Dict[ModelReference, torch.Tensor]) -> Tensor:
-        # Fast path for single-model case
-        if len(tensors) == 1:
-            return list(tensors.values())[0]
+    t = lambda_ if lambda_ is not None else (weight[1] / max(sum(weight), 1e-6))
+    orig_shape = v0.shape
 
-        # Handle base model if provided
-        if self.base_model is not None:
-            if len(tensors) != 3:
-                raise RuntimeError(
-                    "NuSlerp base model can not be one of the two models to merge"
-                )
-            base_tensor = tensors.pop(self.base_model)
-        else:
-            base_tensor = None
+    if nuslerp_flatten:
+        v0, v1 = v0.flatten(), v1.flatten()
+    elif nuslerp_row_wise:
+        v0, v1 = v0.transpose(0, -1), v1.transpose(0, -1)
 
-        # Extract tensors and weights
-        keys = list(tensors.keys())
-        tensors_list = [tensors[key] for key in keys]
-        weights = [self.tensor_parameters[key]["weight"] for key in keys]
+    res_unit = _vectorized_slerp(v0, v1, t)
 
-        # Verify exactly two models are provided
-        if len(tensors_list) != 2:
-            raise RuntimeError(
-                "NuSlerp merge expects exactly two models (plus optional base model)"
-            )
+    if geodesic:
+        m0, m1 = torch.linalg.norm(v0.float()), torch.linalg.norm(v1.float())
+        mag = (m0 ** (1 - t)) * (m1**t)
+        res = res_unit * mag.to(v0.dtype)
+    else:
+        res = res_unit
 
-        # Calculate interpolation factor from weights
-        if abs(sum(weights)) < 1e-6:
-            t = 0.5  # Default when weights sum to zero
-        else:
-            t = weights[1] / sum(weights)
+    if not nuslerp_flatten and nuslerp_row_wise:
+        res = res.transpose(0, -1)
 
-        # Handle embedding tensors with different sizes
-        if base_tensor is not None:
-            tensors_list.append(base_tensor)
-        rectify_embed_sizes(self.weight_info, tensors_list)
-
-        # ChipAlign geodesic interpolation path
-        if self.geodesic:
-            if base_tensor is not None:
-                raise ValueError("ChipAlign-style geodesic interpolation does not support a base model.")
-            
-            # Allow 'lambda' from parameters or fall back to calculated 't'
-            interp_factor = self.lambda_val if self.lambda_val is not None else t
-            
-            # Extract the instruction and domain-specific tensors
-            instruction_tensor = tensors_list[0]
-            domain_tensor = tensors_list[1]
-            
-            # Calculate norms for magnitude preservation
-            instruction_norm = torch.norm(instruction_tensor)
-            domain_norm = torch.norm(domain_tensor)
-            
-            # nuslerp function:
-            # v0_u = normalize(v0), v1_u = normalize(v1)
-            # res = slerp(v0_u, v1_u)
-            
-            merged_tensor_unit = nuslerp(
-                interp_factor,
-                instruction_tensor,
-                domain_tensor,
-                dim=0 if self.row_wise else -1,
-                flatten=self.flatten
-            )
-            
-            # Apply magnitude scaling using weighted geometric mean (ChipAlign paper)
-            # magnitude = (||v0||^(1-t) * ||v1||^t)
-            magnitude = (instruction_norm ** (1 - interp_factor)) * (domain_norm ** interp_factor)
-            
-            # Re-scale
-            merged_tensor = merged_tensor_unit * magnitude
-            
-            return merged_tensor
-        
-        # Standard NuSlerp path
-        if base_tensor is not None:
-            base_tensor = tensors_list.pop()
-            # For task vector mode (with base model)
-            return base_tensor + nuslerp(
-                t,
-                tensors_list[0] - base_tensor,
-                tensors_list[1] - base_tensor,
-                dim=0 if self.row_wise else -1,
-                flatten=self.flatten,
-            )
-        
-        # Direct tensor mode (no base model)
-        return nuslerp(
-            t,
-            tensors_list[0],
-            tensors_list[1],
-            dim=0 if self.row_wise else -1,
-            flatten=self.flatten,
-        )
+    res = res.view(orig_shape)
+    return (base_tensor + res) if base_tensor is not None else res
 
 
-class NuSlerpMerge(MergeMethod):
-    """Merge method implementing both NuSLERP and ChipAlign geodesic interpolation."""
-    def name(self) -> str:
-        return "nuslerp"
-
-    @override
-    def pretty_name(self):
-        return "NuSLERP"
-
-    @override
-    def reference_url(self):
-        return "https://arxiv.org/abs/2412.19819" if self.is_chipalign() else None
-    
-    def is_chipalign(self) -> bool:
-        try:
-            return self._parameters and self._parameters.get("geodesic", False)
-        except AttributeError:
-            return False
-
-    def parameters(self) -> List[ConfigParameterDef]:
-        return [
-            ConfigParameterDef(
-                name="nuslerp_row_wise",
-                required=False,
-                default_value=False,
-                description="SLERP row vectors instead of column vectors",
-            ),
-            ConfigParameterDef(
-                name="nuslerp_flatten",
-                required=False,
-                default_value=True,
-                description="Treat tensors as flattened vectors",
-            ),
-            ConfigParameterDef(
-                name="geodesic",
-                required=False,
-                default_value=False,
-                description="Enable ChipAlign-style geodesic interpolation with magnitude preservation",
-            ),
-            ConfigParameterDef(
-                name="lambda",
-                required=False,
-                default_value=None,
-                description="Interpolation factor (0.0-1.0) for geodesic mode",
-            ),
-        ]
-
-    def tensor_parameters(self) -> List[ConfigParameterDef]:
-        return [ConfigParameterDef(name="weight", required=True)]
-
-    def make_task(
-        self,
-        *,
-        output_weight: WeightInfo,
-        tensors: MergeTensorInput,
-        base_model: Optional[ModelReference],
-        parameters: ImmutableMap[str, Any],
-        tensor_parameters: ImmutableMap[ModelReference, ImmutableMap[str, Any]],
-        **_kwargs,
-    ) -> Task:
-        # Store parameters for reference_url to detect ChipAlign mode
-        self._parameters = parameters
-        
-        return NuSlerpTask(
-            gather_tensors=tensors,
-            tensor_parameters=tensor_parameters,
-            weight_info=output_weight,
-            row_wise=parameters["nuslerp_row_wise"],
-            flatten=parameters["nuslerp_flatten"],
-            base_model=base_model,
-            geodesic=parameters["geodesic"],
-            lambda_val=parameters["lambda"],
-        )
-
-
-def nuslerp(
-    t: float,
-    v0: torch.Tensor,
-    v1: torch.Tensor,
-    dim: int = -1,
-    eps: float = 1e-8,
-    flatten: bool = False,
-):
-    """Enhanced spherical linear interpolation (SLERP) with flexible tensor handling."""
-    out_shape = v0.shape
-
-    def _normalize(x: torch.Tensor, eps: float = 1e-7) -> torch.Tensor:
-        """Normalize tensor along last dimension with numeric stability."""
-        return x / torch.norm(x, dim=-1, keepdim=True).clamp(min=eps)
-
-    # Handle tensor reshaping based on interpolation mode
-    if flatten:
-        # Treat entire tensor as a single vector
-        v0 = v0.view(-1)
-        v1 = v1.view(-1)
-    elif dim != -1:
-        # Perform interpolation along specified dimension
-        v0 = v0.transpose(dim, -1)
-        v1 = v1.transpose(dim, -1)
-
-    # Normalize to unit vectors
-    v0_u = _normalize(v0)
-    v1_u = _normalize(v1)
-
-    # Calculate angle between vectors
-    cos_theta = torch.sum(v0_u * v1_u, dim=-1, keepdim=True)
-    theta = torch.acos(cos_theta.clamp(-1, 1))
+def _vectorized_slerp(v0, v1, t, eps=1e-8):
+    v0_u = v0 / torch.linalg.norm(v0, dim=-1, keepdim=True).clamp(min=eps)
+    v1_u = v1 / torch.linalg.norm(v1, dim=-1, keepdim=True).clamp(min=eps)
+    cos_theta = torch.sum(v0_u * v1_u, dim=-1, keepdim=True).clamp(-1.0, 1.0)
+    theta = torch.acos(cos_theta)
     sin_theta = torch.sin(theta)
-
-    # Handle (nearly) colinear vectors to avoid numerical issues
-    colinear = (sin_theta.abs() < eps).squeeze()
-
-    # SLERP formula: (sin((1-t)*θ)/sin(θ))*v0 + (sin(t*θ)/sin(θ))*v1
-    res = (torch.sin((1 - t) * theta) * v0_u + torch.sin(t * theta) * v1_u) / sin_theta
-    
-    # Fall back to linear interpolation for numerically colinear vectors
-    res[colinear] = (1 - t) * v0_u[colinear] + t * v1_u[colinear]
-
-    # Restore original tensor shape
-    if dim != -1 and not flatten:
-        res = res.transpose(dim, -1)
-    return res.view(out_shape)
+    res = (
+        torch.sin((1 - t) * theta) * v0_u + torch.sin(t * theta) * v1_u
+    ) / sin_theta.clamp(min=eps)
+    return torch.where(sin_theta.abs() < eps, torch.lerp(v0_u, v1_u, t), res)
