@@ -1,10 +1,14 @@
 # Copyright (C) 2025 Arcee AI
 # SPDX-License-Identifier: LGPL-3.0-only
 
+import mergekit.merge_methods.delerp
 import mergekit.merge_methods.multislerp
 import mergekit.merge_methods.nearswap
-import mergekit.merge_methods.ram
 import mergekit.merge_methods.sce
+import mergekit.merge_methods.wave
+import mergekit.merge_methods.nuslerp
+import mergekit.merge_methods.core_space
+import mergekit.merge_methods.swcm
 from mergekit.merge_methods.base import MergeMethod
 from mergekit.merge_methods.generalized_task_arithmetic import (
     GeneralizedTaskArithmeticMerge,
