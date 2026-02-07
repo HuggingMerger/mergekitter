@@ -1,0 +1,20 @@
+merge_method: karcher
+
+models:
+  - model: ./Lambent_Mira-v1.14-27B
+  - model: ./Lambent_Mira-v1.19.3c-27B-dpo
+  - model: ./Lambent_Mira-v1.21-27B-rlvr
+  - model: ./Lambent_Mira-v1.22.2-27B
+  - model: ./Lambent_Mira-v1.23-27B-rlvr
+  - model: ./Lambent_Mira-v1.23.1-27B-dpo
+  
+parameters:
+  max_iter: 10 # You can go as high as you'd like at the cost of time to complete.
+  tol: 1e-9 # Default is 1e-5
+
+tokenizer:
+  source: union
+
+dtype: float32
+out_dtype: bfloat16
+
