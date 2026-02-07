@@ -1,6 +1,7 @@
 # Copyright (C) 2025 Arcee AI
 # SPDX-License-Identifier: LGPL-3.0-only
 
+import datetime
 import importlib
 import importlib.resources
 import logging
@@ -99,7 +100,14 @@ def run_merge(
     if options.write_model_card:
         if not config_source:
             config_source = merge_config.to_yaml()
+    # grab source string for saving backups and local copies
+    if not config_source:
+        config_source = merge_config.to_yaml()
 
+    # Make backup configuration to a safe location
+    _save_config_backup(config_source, out_path)
+
+    if options.write_model_card:
         card_md = generate_card(
             config=merge_config,
             config_yaml=config_source,
@@ -150,6 +158,33 @@ def run_merge(
         )
         logging.info("Deleting initial merge directory: " + out_path)
         shutil.rmtree(out_path)
+
+
+def _save_config_backup(config_source: str, out_path: str):
+    """
+    Saves a timestamped backup of the configuration to ~/.mergekit/configs.
+    Prevents losing your configuration if your delete the merged model folder and forget to backup.
+    """
+    try:
+        backup_dir = os.path.expanduser(os.path.join("~", ".mergekit", "configs"))
+        os.makedirs(backup_dir, exist_ok=True)
+
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H%M%S")
+        model_name = os.path.basename(os.path.normpath(out_path))
+
+        safe_name = "".join(c for c in model_name if c.isalnum() or c in "-_")
+        if not safe_name:
+            safe_name = "merge"
+
+        filename = f"{timestamp}-{safe_name}.yml"
+        backup_path = os.path.join(backup_dir, filename)
+
+        with open(backup_path, "w", encoding="utf-8") as fp:
+            fp.write(config_source)
+
+        LOG.info(f"Configuration backup saved to {backup_path}")
+    except Exception as e:
+        LOG.warning(f"Could not save configuration backup: {e}")
 
 
 def _set_chat_template(
@@ -289,8 +324,9 @@ def _model_out_config(
         res = config.referenced_models()[0].config(trust_remote_code=trust_remote_code)
     if config.out_dtype:
         res.torch_dtype = config.out_dtype
+        res.dtype = config.out_dtype
     elif config.dtype:
-        res.torch_dtype = config.dtype
+        res.dtype = config.dtype
 
     module_layers = {}
     for module_name in arch_info.modules:
