@@ -1,0 +1,19 @@
+merge_method: sce
+
+base_model: model1
+
+models:
+  - model: model1 # MergeKit auto adds base_model to inputs if it missing regardless.
+  - model: model2
+  - model: model3
+  - model: model4
+  
+parameters:
+  select_topk: 0.2 # range is 0 - 1. Lower is generally better for creativity.
+  int8_mask: false      
+  
+tokenizer:
+  source: union  
+  
+dtype: bfloat16
+out_dtype: bfloat16  
