@@ -1,20 +1,17 @@
 # Based on https://arxiv.org/abs/2412.19819
+# ChipAlign merge example
 merge_method: nuslerp
 
 models:
-  - model: ./Gemma-3-27B-it  # Path to instruction-aligned model
-    parameters:
-      weight: 0.5    
-  - model: ./Lambent_Mira-v1.23-27B-rlvr  # Path to chip-specific model
-    parameters:
-      weight: 0.5
+  - model: ./Gemma-3-27b-pt  # Path to instruction-aligned model (Any type works, experiment away.)
+  - model: ./Lambent_Mira-v1.14-27B # Path to chip-specific model
 
 parameters:
   geodesic: true
-  lambda: 0.5  # Interpolation factor between the two models (0.0 = instruction model, 1.0 = chip model)
+  lambda: 0.7  # Interpolation factor between the two models (0.0 = instruction model, 1.0 = chip model)
   nuslerp_flatten: true  # Treat tensors as flattened vectors for geodesic interpolation
-
+  
 tokenizer:
-  source: "union"  # Combine vocabularies from both models
+  source: union # Combine vocabularies from both models
 
-dtype: bfloat16  
+dtype: bfloat16 # Output precision
