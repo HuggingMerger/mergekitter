@@ -1,0 +1,26 @@
+merge_method: cabs
+
+base_model: ./Lambent_Mira-v1.23.1-27B-dpo
+
+models:
+  - model: ./Lambent_Mira-v1.23.1-27B-dpo # Identifier is the path string
+  - model: ./Lambent_Mira-v1.19.3c-27B-dpo # Identifier is the path string
+    parameters:
+      weight: 0.6
+      n_val: 8  # Per-model n
+      m_val: 32 # Per-model m
+  - model: ./Lambent_Mira-v1.23-27B-rlvr  # Identifier is the path string
+    parameters:
+      weight: 0.4
+      n_val: 8  # Per-model n
+      m_val: 32 # Per-model m
+      # n_val and m_val not set for zephyr_beta, will use global defaults
+
+# Global method parameters, sibling to merge_method
+default_n_val: 8   # Global default n
+default_m_val: 32   # Global default m
+pruning_order:
+  - ./Lambent_Mira-v1.19.3c-27B-dpo
+  - ./Lambent_Mira-v1.23-27B-rlvr
+  
+dtype: bfloat16
