@@ -9,7 +9,7 @@ from mergekit.architecture import WeightInfo
 from mergekit.merge_methods.easy_define import merge_method
 from mergekit.merge_methods.rectify_embed import rectify_embed_sizes
 
-
+# Remove registry.py entry and add to __init__.py
 @merge_method(
     name="swcm",
     pretty_name="SWCM (Signal-Weighted Consensus Merge)",
