@@ -125,7 +125,7 @@ class ModelReference(BaseModel, frozen=True):
             model = auto_cls.from_pretrained(
                 self.model.path,
                 revision=self.model.revision,
-                torch_dtype=dtype_from_name(lora_merge_dtype),
+                dtype=dtype_from_name(lora_merge_dtype),
                 low_cpu_mem_usage=True,
                 trust_remote_code=trust_remote_code,
             )
