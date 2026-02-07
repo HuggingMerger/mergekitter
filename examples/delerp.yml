@@ -1,0 +1,17 @@
+merge_method: delerp
+
+base_model: ./Lambent_Mira-v1.23-27B-rlvr
+
+models:
+  - model: ./Lambent_Mira-v1.23-27B-rlvr
+  - model: ./Lambent_Mira-v1.23.1-27B-dpo
+
+parameters:
+  t:
+    - value: 0.999 # Keep this value.
+
+dtype: float32
+out_dtype: bfloat16
+
+tokenizer:
+  source: union # Combine vocabularies from both models
