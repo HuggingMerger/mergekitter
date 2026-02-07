@@ -20,10 +20,7 @@ from mergekit.merge_methods.rectify_embed import rectify_embed_sizes
 class KarcherTask(Task[torch.Tensor]):
     """
     Task for merging model weights using the Riemannian (Karcher) mean algorithm.
-
-    The Karcher mean provides a geometrically meaningful way to average points on a manifold,
-    which is particularly useful for merging model weights that can be interpreted as points
-    on a hypersphere.
+    Few memory tweaks to be able to include more input models.
     """
 
     gather_tensors: MergeTensorInput
@@ -41,31 +38,145 @@ class KarcherTask(Task[torch.Tensor]):
         if len(tensors) == 1:
             return list(tensors.values())[0]
 
-        # Extract tensors and prepare for merging
-        model_tensors = list(tensors.values())
+        # outline keys to allow selective deletion from the dict later
+        model_keys = list(tensors.keys())
+        first_tensor = tensors[model_keys[0]]
+        device = first_tensor.device
+        dtype = first_tensor.dtype
 
-        # Ensure all tensors have compatible shapes
-        for i in range(1, len(model_tensors)):
-            rectify_embed_sizes(self.weight_info, [model_tensors[0], model_tensors[i]])
+        if self.weight_info.is_embed:
+            tensor_list = [tensors[k] for k in model_keys]
+            rectify_embed_sizes(self.weight_info, tensor_list)
+            for i, k in enumerate(model_keys):
+                tensors[k] = tensor_list[i]
+            del tensor_list
 
-        # Calculate weights (equal by default)
-        alphas = [1.0 / len(model_tensors)] * len(model_tensors)
+        num_models = len(model_keys)
+        alphas = [1.0 / num_models] * num_models
 
-        # Apply Karcher mean algorithm
-        return karcher_merge_tensors(
-            model_tensors, alphas, max_iter=self.max_iter, tol=self.tol
+        norms = []
+        units = []
+
+        for k in model_keys:
+            t = tensors[k].to(device)
+
+            t_float = t.to(torch.float32)
+            n_val = torch.linalg.norm(t_float).item()
+
+            if n_val <= 1e-12:
+                norms.append(0.0)
+                units.append(torch.zeros_like(t))
+            else:
+                norms.append(n_val)
+                units.append(t.div_(n_val))
+
+            # cleanup
+            del tensors[k]
+            del t
+            del t_float
+
+        merged_unit = karcher_mean_loop(
+            units, alphas, max_iter=self.max_iter, tol=self.tol, device=device
         )
+
+        # s = sum(alpha * norm)
+        s = sum(a * n for a, n in zip(alphas, norms))
+
+        return merged_unit.mul_(s).to(dtype)
 
     def group_label(self) -> Optional[str]:
         return self.gather_tensors.group_label()
 
 
+def karcher_mean_loop(units, alphas, max_iter, tol, device):
+    """
+    Solves for the Karcher mean on the hypersphere.
+    """
+
+    valid_data = []
+    for u, a in zip(units, alphas):
+        if torch.any(u):
+            valid_data.append((u, a))
+
+    if not valid_data:
+        return units[0]
+
+    valid_units, valid_alphas = zip(*valid_data)
+
+    sum_alpha = sum(valid_alphas)
+    normalized_alphas = [a / sum_alpha for a in valid_alphas]
+
+    u_mean = torch.zeros_like(valid_units[0], dtype=torch.float32)
+    for a, vec in zip(normalized_alphas, valid_units):
+        u_mean.add_(vec, alpha=a)
+
+    norm_u = torch.linalg.norm(u_mean).item()
+    if norm_u < tol:
+        u_mean = valid_units[0].to(torch.float32)
+    else:
+        u_mean.div_(norm_u)
+
+    for _ in range(max_iter):
+        T = torch.zeros_like(u_mean)
+
+        # T = sum(alpha * weight * ui) - (sum(alpha * weight * dot)) * u
+
+        u_subtraction_scalar = 0.0
+        accumulation_happened = False
+
+        u_flat = u_mean.flatten()
+
+        for a, vec in zip(normalized_alphas, valid_units):
+            vec_float = vec.to(torch.float32)
+
+            dot = torch.dot(u_flat, vec_float.flatten()).clamp(-1.0, 1.0)
+
+            if dot > 1.0 - tol:
+                continue
+
+            theta = torch.arccos(dot)
+            sin_theta = torch.sin(theta)
+
+            if sin_theta < tol:
+                continue
+
+            weight = theta / sin_theta
+
+            factor = a * weight
+
+            T.add_(vec_float, alpha=factor)
+
+            # track the u component scalar
+            u_subtraction_scalar += factor * dot
+
+            accumulation_happened = True
+
+        if not accumulation_happened:
+            break
+
+        T.add_(u_mean, alpha=-u_subtraction_scalar)
+
+        norm_T = torch.linalg.norm(T)
+        if norm_T.item() < tol:
+            break
+
+        # u_new = u * cos(norm_T) + (T / norm_T) * sin(norm_T)
+        cos_norm_T = torch.cos(norm_T)
+        sin_norm_T = torch.sin(norm_T)
+
+        # u_mean = u_mean * cos + T * (sin / norm)
+        u_mean.mul_(cos_norm_T).add_(T, alpha=(sin_norm_T / norm_T))
+
+        u_norm_final = torch.linalg.norm(u_mean)
+        if u_norm_final.item() > tol:
+            u_mean.div_(u_norm_final)
+
+    return u_mean
+
+
 class KarcherMerge(MergeMethod):
     """
     Implementation of the Karcher mean merge method.
-
-    This method merges model weights using the Riemannian (Karcher) mean concept,
-    which provides a geometrically meaningful way to average points on a manifold.
     """
 
     def name(self) -> str:
@@ -95,7 +206,6 @@ class KarcherMerge(MergeMethod):
         base_model: Optional[ModelReference],
         **_kwargs,
     ) -> Task:
-        # Use default values from parameters() if not provided
         max_iter = parameters["max_iter"] if "max_iter" in parameters else 10
         tol = parameters["tol"] if "tol" in parameters else 1e-5
 
@@ -105,91 +215,3 @@ class KarcherMerge(MergeMethod):
             max_iter=max_iter,
             tol=tol,
         )
-
-
-def karcher_merge_tensors(tensors, alphas, max_iter=10, tol=1e-5):
-    """
-    Implements weight fusion based on the Riemannian (Karcher) mean concept.
-
-    Args:
-        tensors: List of tensors to merge
-        alphas: List of weights for each tensor
-        max_iter: Maximum number of iterations for the Karcher mean algorithm
-        tol: Convergence tolerance
-
-    Returns:
-        Merged tensor using Karcher mean algorithm
-    """
-    if len(tensors) == 1:
-        return tensors[0]
-
-    # Calculate norms and unit vectors
-    norms = []
-    units = []
-    for t in tensors:
-        t_float = t.float()
-        n = torch.linalg.norm(t_float)
-        n_val = n.item()
-        if n_val == 0.0:
-            norms.append(0.0)
-            units.append(torch.zeros_like(t))
-        else:
-            norms.append(n_val)
-            units.append((t / n).to(t.dtype))
-
-    # Select non-zero weight vectors
-    valid_indices = [i for i, n in enumerate(norms) if n > tol]
-    if not valid_indices:
-        return torch.zeros_like(tensors[0])
-
-    valid_alphas = [alphas[i] for i in valid_indices]
-    alpha_sum = sum(valid_alphas)
-    normalized_alphas = [a / alpha_sum for a in valid_alphas]
-    valid_units = [units[i] for i in valid_indices]
-
-    # Initial guess: Normalized weighted arithmetic mean
-    u = torch.zeros_like(valid_units[0])
-    for a, ui in zip(normalized_alphas, valid_units):
-        u += a * ui
-    norm_u = torch.linalg.norm(u.float()).item()
-    if norm_u < tol:
-        u = valid_units[0].clone()
-    else:
-        u = (u / norm_u).to(u.dtype)
-
-    # Iterative Karcher mean computation
-    for _ in range(max_iter):
-        T = torch.zeros_like(u)
-        for a, ui in zip(normalized_alphas, valid_units):
-            # Flatten tensor for dot product calculation
-            dot = torch.clamp(torch.dot(u.flatten(), ui.flatten()), -1.0, 1.0)
-            theta = torch.arccos(dot)
-            theta_val = theta.item()
-            if theta_val < tol:
-                continue
-            else:
-                # Ensure tensor operations
-                sin_theta = torch.sin(theta)
-                T += a * (theta / sin_theta) * (ui - dot * u)
-
-        # Convert norm_T to tensor
-        norm_T = torch.linalg.norm(T.float())
-        if norm_T.item() < tol:
-            break
-
-        # Use tensor for trigonometric calculations
-        cos_norm_T = torch.cos(norm_T)
-        sin_norm_T = torch.sin(norm_T)
-        u = (cos_norm_T * u + sin_norm_T * (T / norm_T)).to(u.dtype)
-
-        # Ensure u is a unit vector
-        u_norm = torch.linalg.norm(u.float())
-        if u_norm.item() > tol:
-            u = (u / u_norm).to(u.dtype)
-
-    # Global scale: Weighted sum of original tensor norms (including zero vectors)
-    s = 0.0
-    for a, n in zip(alphas, norms):
-        s += a * n
-
-    return s * u
