@@ -8,9 +8,9 @@ Classes:
     Executor: Class for scheduling and executing directed acyclic task graphs.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Union
-import logging
 
 import networkx
 import torch
@@ -487,7 +487,7 @@ class Executor:
 
                 res = task.execute(**arguments)
             except RuntimeError as e:
-                # Handle OOM by falling back to CPU
+                # Handle OOM by introducing CPU to fill the missing compute requirement
                 if use_math_device and "out of memory" in str(e).lower():
                     LOG.warning(
                         f"OOM detected for task {task}. Falling back to CPU execution."
