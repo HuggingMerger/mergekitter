@@ -1,0 +1,19 @@
+# WIP method. Math from the paper is hard. https://arxiv.org/abs/2602.11717 Feel free to write a PR if you see any flaws in the python
+
+merge_method: scf_rkl
+
+base_model: $MODELS/google_gemma-3-27b-it # base auto adds to input models
+
+models:
+  - model: $MODELS/translategemma-27b-it
+ 
+parameters:
+    rkl_beta: 0.7 # wip, play around with values
+    sparsity_ratio: 0.4 # wip, play around with values
+    use_soft_fusion: false 
+
+dtype: float32
+out_dtype: bfloat16
+
+tokenizer:
+  source: union
