@@ -1,160 +1,108 @@
-# Copyright (C) 2026 Arcee AI
-# SPDX-License-Identifier: BUSL-1.1
+# Copyright (C) 2025 Arcee AI
+# SPDX-License-Identifier: LGPL-3.0-only
 
-from typing import Any, Dict, List, Optional
+import logging
+from typing import List
 
 import torch
-from typing_extensions import override
 
 from mergekit.architecture import WeightInfo
-from mergekit.common import ImmutableMap, ModelReference
-from mergekit.graph import Task
-from mergekit.merge_methods.base import (
-    ConfigParameterDef,
-    MergeMethod,
-    MergeTensorInput,
-)
+from mergekit.merge_methods.easy_define import merge_method
 from mergekit.merge_methods.rectify_embed import rectify_embed_sizes
 
+LOG = logging.getLogger(__name__)
 
-def magic_magnitude_calibration(
-    merged_tv: torch.Tensor,
-    input_norms: torch.Tensor,
-    scaling_factor: float = 1.0,
+
+@merge_method(
+    name="magic",
+    pretty_name="MAGIC (Magnitude Calibration)",
+    reference_url="https://arxiv.org/abs/2512.19320",
+)
+def magic_merge(
+    tensors: List[torch.Tensor],
+    base_tensor: torch.Tensor,
+    output_weight: WeightInfo,
+    weight: List[float] = 1.0,
+    calibration_strength: float = 1.0,
+    use_svc: bool = True,
+    num_power_iter: int = 15,
+    epsilon: float = 1e-6,
 ) -> torch.Tensor:
     """
-    Implements Weight Space Calibration (WSC) from MAGIC (arXiv:2512.19320).
-    Rescales the merged task vector to match the average magnitude of original task vectors.
+    MAGIC (Magnitude Calibration)
+    Adjusts the magnitude of the merged delta to match the weighted average
+    of the input deltas' magnitudes. This compensates for the magnitude
+    collapse that occurs during linear averaging.
     """
-    # calc target norm rho * (1/N * sum(||tau_i||))
-    target_norm = input_norms.mean() * scaling_factor
+    all_inputs = [base_tensor] + tensors
+    rectify_embed_sizes(output_weight, all_inputs)
+    base_tensor, donors = all_inputs[0], all_inputs[1:]
+
+    if not donors:
+        return base_tensor
+
+    device, dtype = base_tensor.device, base_tensor.dtype
     
-    # calc current norm of the merged vector
-    current_norm = merged_tv.to(torch.float32).norm()
+    iters = int(num_power_iter)
 
-    if current_norm < 1e-6:
-        return merged_tv
+    avg_delta = torch.zeros_like(base_tensor, dtype=torch.float32)
+    sum_input_norms = 0.0
+    total_w = 0.0
 
-    gamma = target_norm / current_norm
-    calibrated_tv = merged_tv * gamma
+    for i, t in enumerate(donors):
+        w_i = weight[i]
+        delta = (t - base_tensor).float()
 
-    return calibrated_tv.to(merged_tv.dtype)
+        # Measure magnitude (Spectral Norm/SVC vs Frobenius)
+        if use_svc and delta.ndim >= 2:
+            norm_i = _estimate_spectral_norm(delta, iters)
+        else:
+            norm_i = torch.linalg.norm(delta)
 
+        sum_input_norms += norm_i.item() * w_i
+        avg_delta.add_(delta, alpha=w_i)
+        total_w += w_i
 
-class MagicTask(Task[torch.Tensor]):
-    gather_tensors: MergeTensorInput
-    base_model: ModelReference
-    weight_info: WeightInfo
-    tensor_parameters: ImmutableMap[ModelReference, ImmutableMap[str, Any]]
-    scaling_factor: float
+    donors.clear()
 
-    def uses_accelerator(self) -> bool:
-        return True
+    avg_delta.div_(max(total_w, epsilon))
+    target_norm = sum_input_norms / max(total_w, epsilon)
 
-    def arguments(self) -> Dict[str, Task]:
-        return {"tensors": self.gather_tensors}
+    if use_svc and avg_delta.ndim >= 2:
+        merged_norm = _estimate_spectral_norm(avg_delta, iters)
+    else:
+        merged_norm = torch.linalg.norm(avg_delta)
 
-    def execute(self, tensors: Dict[ModelReference, torch.Tensor]) -> torch.Tensor:
-        if self.base_model not in tensors:
-            raise RuntimeError("MAGIC merge requires a 'base_model'.")
+    ratio = target_norm / max(merged_norm.item(), epsilon)
+    actual_scale = 1.0 + (calibration_strength * (ratio - 1.0))
 
-        base_tensor = tensors[self.base_model]
-        base_device = base_tensor.device
-        base_dtype = base_tensor.dtype
-
-        # grab other models
-        model_keys = [k for k in tensors.keys() if k != self.base_model]
-        if not model_keys:
-            return base_tensor
-
-        if self.weight_info.is_embed:
-            # prep list
-            all_tensors_ordered = [base_tensor] + [tensors[k] for k in model_keys]
-            rectify_embed_sizes(self.weight_info, all_tensors_ordered)
-            
-            # refetch resized base
-            base_tensor = all_tensors_ordered[0]
-            for i, k in enumerate(model_keys):
-                tensors[k] = all_tensors_ordered[i+1]
-        
-        # gather summed tv
-        merged_delta = torch.zeros_like(base_tensor, dtype=base_dtype, device=base_device)
-        
-        # store norms of individual tvs for magic calc
-        norms_list = []
-
-        for key in model_keys:
-            # dtype
-            model_tensor = tensors[key].to(base_dtype).to(base_device)
-            
-            params = self.tensor_parameters[key]
-            weight = params["weight"] if "weight" in params else 1.0
-            
-            # calc tv (tau_i)
-            # delta = (fine_tuned - base) * weight
-            delta = model_tensor.sub_(base_tensor).mul_(weight)
-
-            # capture norm
-            norms_list.append(delta.to(torch.float32).norm())
-
-            # add to merged delta sum
-            merged_delta.add_(delta)
-
-            # cleanup
-            del delta
-            del model_tensor
-            del tensors[key]
-
-        if not norms_list:
-            return base_tensor
-
-        # Stack norms 
-        input_norms = torch.stack(norms_list)
-
-        calibrated_delta = magic_magnitude_calibration(
-            merged_delta, input_norms, self.scaling_factor
+    if LOG.isEnabledFor(logging.DEBUG) and "vision" not in output_weight.name.lower():
+        LOG.debug(
+            f"MAGIC [{output_weight.name}] Target: {target_norm:.4f} | "
+            f"Merged: {merged_norm.item():.4f} | Ratio: {ratio:.4f} | Scale: {actual_scale:.4f}"
         )
 
-        return base_tensor + calibrated_delta
-
-    def group_label(self) -> Optional[str]:
-        return self.gather_tensors.group_label()
+    return (base_tensor + (avg_delta * actual_scale)).to(dtype)
 
 
-class MagicMerge(MergeMethod):
-    def name(self) -> str:
-        return "magic"
+@torch.no_grad()
+def _estimate_spectral_norm(tensor: torch.Tensor, iters: int) -> torch.Tensor:
+    """
+    Estimate the spectral norm (largest singular value) using Power Iteration.
+    For tensors > 2D, they are flattened into matrices.
+    """
+    if tensor.ndim > 2:
+        tensor = tensor.view(tensor.shape[0], -1)
 
-    @override
-    def pretty_name(self) -> Optional[str]:
-        return "MAGIC (Magnitude Calibration)"
+    m, n = tensor.shape
+    u = torch.randn((n, 1), device=tensor.device, dtype=tensor.dtype)
+    u /= torch.linalg.norm(u).clamp(min=1e-12)
 
-    @override
-    def reference_url(self) -> Optional[str]:
-        return "https://arxiv.org/abs/2512.19320"
+    for _ in range(iters):
+        # Power iteration: v = Au; u = A^T v
+        v = torch.matmul(tensor, u)
+        v /= torch.linalg.norm(v).clamp(min=1e-12)
+        u = torch.matmul(tensor.t(), v)
+        u /= torch.linalg.norm(u).clamp(min=1e-12)
 
-    def parameters(self) -> List[ConfigParameterDef]:
-        return [
-            ConfigParameterDef(name="scaling_factor", required=False, default_value=1.0)
-        ]
-
-    def tensor_parameters(self) -> List[ConfigParameterDef]:
-        return [ConfigParameterDef(name="weight", required=False, default_value=1.0)]
-
-    def make_task(
-        self,
-        *,
-        output_weight: WeightInfo,
-        tensors: MergeTensorInput,
-        base_model: Optional[ModelReference],
-        parameters: ImmutableMap[str, Any],
-        tensor_parameters: ImmutableMap[ModelReference, ImmutableMap[str, Any]],
-        **_kwargs,
-    ) -> Task:
-        return MagicTask(
-            gather_tensors=tensors,
-            base_model=base_model,
-            weight_info=output_weight,
-            tensor_parameters=tensor_parameters,
-            scaling_factor=parameters["scaling_factor"],
-        )
+    return torch.linalg.norm(torch.matmul(tensor, u))
