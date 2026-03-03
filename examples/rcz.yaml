@@ -1,0 +1,23 @@
+merge_method: rcz
+
+base_model: $MODELS/kitchen/SF-Foundation_gemma3_27b_mulitmodal_sft_01-31-2026
+
+models:
+    - model: $MODELS/kitchen/Mira-LA-SCF_RKM-v2a
+    - model: $MODELS/kitchen/Mira-LA-Magic-v2c
+    - model: $MODELS/kitchen/Mira-LA-Varcross-v2a
+    - model: $MODELS/kitchen/Mira-LA-Magic-v2d
+    - model: $MODELS/kitchen/Mira-MZ-RCZ-v2a
+
+dtype: float32
+out_dtype: bfloat16
+
+tokenizer:
+  source: union
+
+parameters:
+  # With mini-docs
+  lambda_scale: 0.75 # Higher to amplify unique features
+  max_rho: 0.15 # Allows for more boost in dense layers
+  tol: 1e-6 # 1e-6 to 1e-7 is more sensitive to capture subtle changes, play around with it.
+
