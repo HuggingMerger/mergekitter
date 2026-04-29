@@ -1,9 +1,8 @@
 # Copyright (C) 2025 Arcee AI
 # SPDX-License-Identifier: LGPL-3.0-only
-
+import torch
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Tuple
-
 from pydantic import BaseModel, Field
 from transformers import PretrainedConfig
 
@@ -151,3 +150,6 @@ class ConfiguredModelArchitecture(BaseModel, frozen=True, arbitrary_types_allowe
             config=self.config,
             weight_prefix=self.info.modules[module_name].weight_prefix,
         )
+
+ConfiguredModuleArchitecture.model_rebuild()
+ConfiguredModelArchitecture.model_rebuild()
