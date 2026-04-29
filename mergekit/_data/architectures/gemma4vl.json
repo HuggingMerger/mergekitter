@@ -1,0 +1,205 @@
+{
+    "kind": "modular",
+    "architectures": [
+        "Gemma4ForConditionalGeneration"
+    ],
+    "model_type": "gemma4",
+    "tagalong_files": [
+        "preprocessor_config.json",
+        "processor_config.json"
+    ],
+    "vocab_size_config_key": "text_config.vocab_size",
+    "modules": {
+        "text_decoder": {
+            "weight_prefix": "model.language_model.",
+            "architecture": {
+                "model_type": "gemma4_text",
+                "architectures": [
+                    "Gemma4ForCausalLM"
+                ],
+                "pre_weights": [
+                    {
+                        "name": "embed_tokens.weight",
+                        "is_embed": true
+                    }
+                ],
+                "num_layers_config_key": "text_config.num_hidden_layers",
+                "layer_templates": {
+                    "weights": [
+                        {
+                            "name": "layers.${layer_index}.input_layernorm.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.self_attn.q_proj.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.self_attn.q_norm.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.self_attn.k_proj.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.self_attn.k_norm.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.self_attn.v_proj.weight",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.self_attn.o_proj.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.post_attention_layernorm.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.pre_feedforward_layernorm.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.mlp.gate_proj.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.mlp.up_proj.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.mlp.down_proj.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.post_feedforward_layernorm.weight"
+                        },
+                        {
+                            "name": "layers.${layer_index}.pre_feedforward_layernorm_2.weight",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.experts.gate_up_proj",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.experts.down_proj",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.router.proj.weight",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.router.per_expert_scale",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.router.scale",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.post_feedforward_layernorm_1.weight",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.post_feedforward_layernorm_2.weight",
+                            "optional": true
+                        },
+                        {
+                            "name": "layers.${layer_index}.layer_scalar"
+                        }
+                    ]
+                },
+                "post_weights": [
+                    {
+                        "name": "norm.weight"
+                    },
+                    {
+                        "name": "lm_head.weight",
+                        "is_embed": true,
+                        "optional": true,
+                        "tied_names": [
+                            "embed_tokens.weight"
+                        ]
+                    }
+                ]
+            }
+        },
+        "embed_vision": {
+            "weight_prefix": "model.embed_vision.",
+            "architecture": {
+                "model_type": "gemma4_embed_vision",
+                "architectures": [],
+                "pre_weights": [
+                    {
+                        "name": "embedding_projection.weight"
+                    }
+                ],
+                "post_weights": [],
+                "layer_templates": {
+                    "weights": []
+                },
+                "override_num_layers": 0
+            }
+        },
+        "vision_tower": {
+            "weight_prefix": "model.vision_tower.",
+            "architecture": {
+                "model_type": "gemma4_vision",
+                "architectures": [],
+                "pre_weights": [
+                    {
+                        "name": "patch_embedder.input_proj.weight"
+                    },
+                    {
+                        "name": "patch_embedder.position_embedding_table"
+                    },
+                    {
+                        "name": "std_bias"
+                    },
+                    {
+                        "name": "std_scale"
+                    }
+                ],
+                "post_weights": [],
+                "layer_templates": {
+                    "weights": [
+                        {
+                            "name": "encoder.layers.${layer_index}.input_layernorm.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.self_attn.q_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.self_attn.q_norm.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.self_attn.k_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.self_attn.k_norm.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.self_attn.v_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.self_attn.o_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.post_attention_layernorm.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.pre_feedforward_layernorm.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.mlp.gate_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.mlp.up_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.mlp.down_proj.linear.weight"
+                        },
+                        {
+                            "name": "encoder.layers.${layer_index}.post_feedforward_layernorm.weight"
+                        }
+                    ]
+                },
+                "num_layers_config_key": "vision_config.num_hidden_layers"
+            }
+        }
+    }
+}
